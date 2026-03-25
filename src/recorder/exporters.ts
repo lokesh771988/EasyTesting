@@ -18,6 +18,20 @@ function javaStr(s: string): string {
   );
 }
 
+/** Escape string for C# verbatim or regular string literal (use "@\"...\""). */
+function csStr(s: string): string {
+  return (
+    '"' +
+    String(s)
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
+      .replace(/\n/g, '\\n')
+      .replace(/\r/g, '\\r')
+      .replace(/\t/g, '\\t') +
+    '"'
+  );
+}
+
 export function toConf(steps: RecordedStep[]): string {
   const lines: string[] = ['# Recorded script – edit and run with: cstesting <file.conf>', 'headless=false', ''];
   for (const s of steps) {
@@ -225,6 +239,101 @@ export function toJava(steps: RecordedStep[]): string {
     } else if (s.action === 'switchTab' && s.index !== undefined) {
       lines.push('        java.util.List<String> handles = browser.getWindowHandles();');
       lines.push('        if (' + s.index + ' < handles.size()) browser.switchToWindow(handles.get(' + s.index + '));');
+    }
+  }
+  lines.push('    }');
+  lines.push('}');
+  return lines.join('\n');
+}
+
+/**
+ * Export recorded steps to C# (CSTesting.DotNet / NUnit API).
+ * Generates a test class with [Test] method; run with dotnet test.
+ */
+export function toCs(steps: RecordedStep[]): string {
+  const lines: string[] = [
+    'using System.Threading.Tasks;',
+    'using CSTesting;',
+    'using NUnit.Framework;',
+    '',
+    'namespace CSTesting.Recorded;',
+    '',
+    '/// <summary>Recorded test – run with: dotnet test</summary>',
+    '[TestFixture]',
+    'public class RecordedTest : CSTestingTestBase',
+    '{',
+    '    [SetUp]',
+    '    public async Task SetUp()',
+    '    {',
+    '        if (Browser == null)',
+    '            Browser = await CSTesting.CSTesting.CreateBrowserAsync(new CSTestingOptions { Headless = false });',
+    '    }',
+    '',
+    '    [TearDown]',
+    '    public async Task TearDown()',
+    '    {',
+    '        if (Browser != null)',
+    '        {',
+    '            await Browser.CloseAsync();',
+    '            Browser = null;',
+    '        }',
+    '    }',
+    '',
+    '    [Test(Description = "Recorded steps")]',
+    '    public async Task RecordedSteps()',
+    '    {',
+  ];
+  for (const s of steps) {
+    if (s.action === 'goto' && s.url) {
+      lines.push('        await Browser.GotoAsync(' + csStr(s.url) + ');');
+    } else if (s.action === 'click' && s.selector) {
+      lines.push('        await Browser.ClickAsync(' + csStr(s.selector) + ');');
+    } else if (s.action === 'doubleClick' && s.selector) {
+      lines.push('        await Browser.DoubleClickAsync(' + csStr(s.selector) + ');');
+    } else if (s.action === 'rightClick' && s.selector) {
+      lines.push('        await Browser.RightClickAsync(' + csStr(s.selector) + ');');
+    } else if (s.action === 'type' && s.selector && s.value !== undefined) {
+      lines.push('        await Browser.TypeAsync(' + csStr(s.selector) + ", " + csStr(s.value) + ');');
+    } else if (s.action === 'select' && s.selector && s.value !== undefined) {
+      lines.push('        await Browser.SelectAsync(' + csStr(s.selector) + ", " + csStr(s.value) + ');');
+    } else if (s.action === 'select' && s.selector && (s as RecordedStep & { label?: string }).label) {
+      const label = (s as RecordedStep & { label: string }).label;
+      lines.push('        await Browser.SelectByLabelAsync(' + csStr(s.selector) + ", " + csStr(label) + ');');
+    } else if (s.action === 'check' && s.selector) {
+      lines.push('        await Browser.CheckAsync(' + csStr(s.selector) + ');');
+    } else if (s.action === 'uncheck' && s.selector) {
+      lines.push('        await Browser.UncheckAsync(' + csStr(s.selector) + ');');
+    } else if (s.action === 'hover' && s.selector) {
+      lines.push('        await Browser.HoverAsync(' + csStr(s.selector) + ');');
+    } else if (s.action === 'dragAndDrop' && s.sourceSelector && s.selector) {
+      lines.push('        await Browser.DragAndDropAsync(' + csStr(s.sourceSelector) + ", " + csStr(s.selector) + ');');
+    } else if (s.action === 'wait' && s.ms) {
+      lines.push('        await Browser.SleepAsync(' + s.ms + ');');
+    } else if (s.action === 'assertText' && s.selector && s.expected !== undefined) {
+      lines.push(
+        '        Assert.That(await Browser.Locator(' + csStr(s.selector) + ").GetTextContentAsync(), Is.EqualTo(" + csStr(s.expected) + "));"
+      );
+    } else if (s.action === 'assertAttribute' && s.selector && s.attributeName && s.expected !== undefined) {
+      lines.push(
+        '        Assert.That(await Browser.Locator(' +
+          csStr(s.selector) +
+          ").GetAttributeAsync(" +
+          csStr(s.attributeName) +
+          "), Is.EqualTo(" +
+          csStr(s.expected) +
+          "));"
+      );
+    } else if (s.action === 'dialog') {
+      if (s.behavior === 'dismiss') {
+        lines.push('        Browser.SetDialogHandler(accept: false);');
+      } else if (s.promptText !== undefined && s.promptText !== '') {
+        lines.push('        Browser.AcceptNextDialog(' + csStr(s.promptText) + ');');
+      } else {
+        lines.push('        Browser.AcceptNextDialog();');
+      }
+    } else if (s.action === 'switchTab' && s.index !== undefined) {
+      lines.push('        var handles = await Browser.GetTabsAsync();');
+      lines.push('        if (' + s.index + ' < handles.Count) await Browser.SwitchToTabAsync(' + s.index + ");");
     }
   }
   lines.push('    }');

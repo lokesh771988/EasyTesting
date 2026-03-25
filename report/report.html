@@ -95,16 +95,16 @@
         <span class="report-summary-item">Flaky 0</span>
         <span class="report-summary-item skipped">Skipped 0</span>
       </div>
-      <div class="report-meta">02/24/2026, 09:29:49 PM · Total time: 28.9s</div>
+      <div class="report-meta">03/10/2026, 09:40:19 PM · Total time: 22.9s</div>
     </div>
   </div>
 
   <div class="report-content">
     
-  <div class="report-file-group" data-file="recorded.conf" data-search="recorded.conf recorded.conf recorded.conf recorded script – edit and run with: cstesting &lt;file.conf&gt;">
-    <div class="report-file-header" role="button" tabindex="0" aria-expanded="true" data-target="file-recorded_conf">
+  <div class="report-file-group" data-file="booktable.conf" data-search="booktable.conf booktable.conf booktable.conf (only the first # starts a test case; other # lines would start a new case and break foreach body.)">
+    <div class="report-file-header" role="button" tabindex="0" aria-expanded="true" data-target="file-booktable_conf">
       <span class="report-file-chevron">▼</span>
-      <span class="report-file-path">recorded.conf</span>
+      <span class="report-file-path">booktable.conf</span>
       <span class="report-file-count">1 test</span>
       <span class="report-file-badges">
         <span class="report-file-badge pass">✓ 1</span>
@@ -112,21 +112,21 @@
         
       </span>
     </div>
-    <div id="file-recorded_conf" class="report-file-tests">
+    <div id="file-booktable_conf" class="report-file-tests">
       
-    <div class="report-test-row report-test-pass" data-expanded="false" data-search="recorded.conf recorded.conf recorded script – edit and run with: cstesting &lt;file.conf&gt;" data-index="0">
+    <div class="report-test-row report-test-pass" data-expanded="false" data-search="booktable.conf booktable.conf (only the first # starts a test case; other # lines would start a new case and break foreach body.)" data-index="0">
       <span class="report-dot pass"></span>
       <div class="report-test-body">
         <div class="report-test-header" role="button" tabindex="0" aria-expanded="false">
-          <span class="report-test-name">recorded.conf › Recorded script – edit and run with: cstesting &lt;file.conf&gt;</span>
+          <span class="report-test-name">booktable.conf › (Only the first # starts a test case; other # lines would start a new case and break forEach body.)</span>
           <span class="report-test-meta">
-            <span class="report-test-duration" title="Duration">28.3s</span>
+            <span class="report-test-duration" title="Duration">22.4s</span>
             <span class="report-status-badge status-pass">Passed</span>
             <span class="report-chevron">▶</span>
           </span>
         </div>
         
-        <div class="report-source">recorded.conf</div>
+        <div class="report-source">booktable.conf</div>
         <div class="report-test-details">
           
     <div class="report-section">
@@ -141,37 +141,12 @@
         <div class="report-step-row">
           <span class="report-step-icon report-step-passed">✓</span>
           <span class="report-step-index">2</span>
-          <span class="report-step-title">click #confirmBtn</span>
+          <span class="report-step-title">wait 3000ms</span>
         </div>
         <div class="report-step-row">
           <span class="report-step-icon report-step-passed">✓</span>
           <span class="report-step-index">3</span>
-          <span class="report-step-title">click div:nth-of-type(6) &gt; div:nth-of-type(1)</span>
-        </div>
-        <div class="report-step-row">
-          <span class="report-step-icon report-step-passed">✓</span>
-          <span class="report-step-index">4</span>
-          <span class="report-step-title">assertText #demo contains &quot;You pressed OK!&quot;</span>
-        </div>
-        <div class="report-step-row">
-          <span class="report-step-icon report-step-passed">✓</span>
-          <span class="report-step-index">5</span>
-          <span class="report-step-title">dialog prompt:lokesh</span>
-        </div>
-        <div class="report-step-row">
-          <span class="report-step-icon report-step-passed">✓</span>
-          <span class="report-step-index">6</span>
-          <span class="report-step-title">click #promptBtn</span>
-        </div>
-        <div class="report-step-row">
-          <span class="report-step-icon report-step-passed">✓</span>
-          <span class="report-step-index">7</span>
-          <span class="report-step-title">click div:nth-of-type(6) &gt; div:nth-of-type(1)</span>
-        </div>
-        <div class="report-step-row">
-          <span class="report-step-icon report-step-passed">✓</span>
-          <span class="report-step-index">8</span>
-          <span class="report-step-title">assertText #demo contains &quot;Hello lokesh! How are you today?&quot;</span>
+          <span class="report-step-title">forEach table[name=&quot;BookTable&quot;] tbody tr (8 steps)</span>
         </div>
       </div>
     </div>

@@ -5,7 +5,7 @@
 
 import * as http from 'http';
 import type { RecordedStep } from './recorded-step';
-import { toConf, toJs, toTs, toJava } from './exporters';
+import { toConf, toJs, toTs, toJava, toCs } from './exporters';
 
 const INSPECTOR_HTML = `<!DOCTYPE html>
 <html lang="en">
@@ -62,6 +62,7 @@ const INSPECTOR_HTML = `<!DOCTYPE html>
       <button type="button" data-tab-btn="js">JavaScript</button>
       <button type="button" data-tab-btn="ts">TypeScript</button>
       <button type="button" data-tab-btn="java">Java</button>
+      <button type="button" data-tab-btn="cs">C#</button>
     </div>
     <div class="actions">
       <button type="button" id="copyBtn">Copy</button>
@@ -73,6 +74,7 @@ const INSPECTOR_HTML = `<!DOCTYPE html>
     <pre data-tab="js" id="jsPre"></pre>
     <pre data-tab="ts" id="tsPre"></pre>
     <pre data-tab="java" id="javaPre"></pre>
+    <pre data-tab="cs" id="csPre"></pre>
   </div>
   <script>
     var currentFormat = 'conf';
@@ -91,6 +93,7 @@ const INSPECTOR_HTML = `<!DOCTYPE html>
       fetch('/script?format=js').then(function(r) { return r.text(); }).then(function(t) { document.getElementById('jsPre').textContent = t || '// No steps yet'; });
       fetch('/script?format=ts').then(function(r) { return r.text(); }).then(function(t) { document.getElementById('tsPre').textContent = t || '// No steps yet'; });
       fetch('/script?format=java').then(function(r) { return r.text(); }).then(function(t) { document.getElementById('javaPre').textContent = t || '// No steps yet'; });
+      fetch('/script?format=cs').then(function(r) { return r.text(); }).then(function(t) { document.getElementById('csPre').textContent = t || '// No steps yet'; });
     }
     document.getElementById('copyBtn').addEventListener('click', function() {
       fetch('/script?format=' + currentFormat).then(function(r) { return r.text(); }).then(function(t) {
@@ -177,6 +180,7 @@ export function createInspectorServer(
       if (format === 'js') body = toJs(steps);
       else if (format === 'ts') body = toTs(steps);
       else if (format === 'java') body = toJava(steps);
+      else if (format === 'cs') body = toCs(steps);
       else body = toConf(steps);
       res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
       res.end(body);

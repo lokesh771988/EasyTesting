@@ -3,10 +3,13 @@
  */
 
 import type { RunResult } from './types';
+import { waitForEnter } from './wait-for-enter';
 import type { ParsedConfig, ConfigStep } from './config-parser';
 import { parseConfigFile } from './config-parser';
 import { createBrowser, resolveSelector, type BrowserType } from './browser';
-import type { BrowserApi, FrameHandle } from './browser';
+import type { BrowserApi, FrameHandle, LocatorApi } from './browser';
+import { compareScreenshots } from './visual-compare';
+import { checkOverlappingText, checkHiddenOrOverlappingText } from './text-layout-check';
 
 function stepLabel(step: ConfigStep): string {
   switch (step.action) {
@@ -51,6 +54,23 @@ function stepLabel(step: ConfigStep): string {
       return `assertText ${step.textSelector} equals attr ${step.attributeName} of ${step.attrSelector}`;
     case 'assertAttribute':
       return `assertAttribute ${step.selector} attr ${step.attributeName} = "${step.expected}"`;
+    case 'assertScreenshot':
+      const ss = step as { baselinePath: string; threshold?: number; resize?: boolean };
+      return `assertScreenshot ${ss.baselinePath}${ss.resize ? ' (resize)' : ''}`;
+    case 'assertNoOverlappingText':
+      return 'assertNoOverlappingText (Type 2)';
+    case 'assertNoHiddenOrOverlappingText':
+      return 'assertNoHiddenOrOverlappingText (Type 3)';
+    case 'getText':
+      return step.variable ? `getText ${step.selector} → $${step.variable}` : `getText ${step.selector} → $lastText`;
+    case 'display':
+      return step.isVariable ? `display $${step.selectorOrVariable}` : `display ${step.selectorOrVariable}`;
+    case 'assertVar':
+      return `assertVar $${step.variable} = "${step.expected}"`;
+    case 'forEach':
+      return `forEach ${step.selector} (${step.body.length} steps)`;
+    case 'if':
+      return step.varName != null ? `if $${step.varName} = "${step.expected}"` : `if ${step.selector} = "${step.expected}"`;
     default:
       return String(step);
   }
@@ -105,11 +125,40 @@ interface RunContext {
   currentFrame: FrameHandle | null;
   setNextDialog: (d: PendingDialog) => void;
   onClose: () => void;
+  variables: Record<string, string>;
+  /** When inside forEach, locator for the current element (row/cell/option). Use >>selector for same-row. */
+  currentLoopLocator: LocatorApi | null;
 }
 
 function getTarget(ctx: RunContext): PageLike {
   const browser = ctx.getBrowser();
   return (ctx.currentFrame ?? browser) as PageLike;
+}
+
+/** Resolve selector: >> means current loop element; >>sel means within current loop element; else page/frame. */
+function getLocator(ctx: RunContext, selector: string): LocatorApi {
+  const base = ctx.currentFrame ?? ctx.getBrowser()!;
+  if (ctx.currentLoopLocator && selector.startsWith('>>')) {
+    const inner = selector.slice(2).trim();
+    return inner ? ctx.currentLoopLocator.locator(inner) : ctx.currentLoopLocator;
+  }
+  return base.locator(selector);
+}
+
+/** Get number of elements matching selector (for forEach). */
+async function getSelectorCount(ctx: RunContext, selector: string): Promise<number> {
+  const base = ctx.currentFrame ?? ctx.getBrowser()!;
+  const isXPath = selector.startsWith('/') || selector.startsWith('(');
+  const sel = JSON.stringify(selector);
+  const expr = isXPath
+    ? `(function(s){ try { var r = document.evaluate("count(" + s + ")", document, null, XPathResult.NUMBER_TYPE, null); return r.numberValue; } catch(e) { return 0; } })(${sel})`
+    : `(function(s){ try { return document.querySelectorAll(s).length; } catch(e) { return 0; } })(${sel})`;
+  return base.evaluate<number>(expr);
+}
+
+/** Run a list of steps (used for forEach body and if body). */
+async function runSteps(ctx: RunContext, steps: ConfigStep[]): Promise<void> {
+  for (const s of steps) await executeStep(ctx, s);
 }
 
 async function executeStep(ctx: RunContext, step: ConfigStep): Promise<void> {
@@ -161,6 +210,54 @@ async function executeStep(ctx: RunContext, step: ConfigStep): Promise<void> {
       });
       return;
     }
+    case 'assertScreenshot': {
+      const { baselinePath, threshold, resize } = step as { baselinePath: string; threshold?: number; resize?: boolean };
+      const actualBuffer = await b.getScreenshot({ fullPage: true });
+      const result = compareScreenshots(actualBuffer, baselinePath, {
+        threshold,
+        resizeMode: resize ? 'actualToBaseline' : 'strict',
+      });
+      if (result.dimensionMismatch) {
+        throw new Error(
+          `assertScreenshot: dimension mismatch. Baseline: ${result.dimensionMismatch.baseline.width}x${result.dimensionMismatch.baseline.height}, actual: ${result.dimensionMismatch.actual.width}x${result.dimensionMismatch.actual.height}. Add =resize to compare by resizing actual to baseline size.`
+        );
+      }
+      if (!result.match) {
+        throw new Error(
+          `assertScreenshot: visual diff. ${result.diffPixelCount} pixels differ (${(result.diffRatio * 100).toFixed(2)}%). Baseline: ${baselinePath}.`
+        );
+      }
+      return;
+    }
+    case 'assertNoOverlappingText': {
+      const page = ctx.currentFrame ?? b;
+      const result = await checkOverlappingText(page);
+      if (result.overlapping.length > 0) {
+        const msg = result.overlapping
+          .slice(0, 3)
+          .map((p) => `"${p.a.text}" vs "${p.b.text}"`)
+          .join('; ');
+        throw new Error(
+          `assertNoOverlappingText (Type 2): ${result.overlapping.length} overlapping text pair(s) found. Examples: ${msg}.`
+        );
+      }
+      return;
+    }
+    case 'assertNoHiddenOrOverlappingText': {
+      const page = ctx.currentFrame ?? b;
+      const result = await checkHiddenOrOverlappingText(page);
+      const parts: string[] = [];
+      if (result.hidden.length > 0) parts.push(`${result.hidden.length} hidden text`);
+      if (result.overlapping.length > 0) parts.push(`${result.overlapping.length} overlapping pair(s)`);
+      if (parts.length > 0) {
+        const hiddenSample = result.hidden.slice(0, 2).map((h) => `"${h.text}" (${h.reason})`).join('; ');
+        const overlapSample = result.overlapping.slice(0, 2).map((p) => `"${p.a.text}" vs "${p.b.text}"`).join('; ');
+        throw new Error(
+          `assertNoHiddenOrOverlappingText (Type 3): ${parts.join(', ')}. Hidden: ${hiddenSample}. Overlap: ${overlapSample}.`
+        );
+      }
+      return;
+    }
     case 'switchTab': {
       await b.switchToTab(step.index);
       await new Promise((r) => setTimeout(r, 300));
@@ -181,19 +278,18 @@ async function executeStep(ctx: RunContext, step: ConfigStep): Promise<void> {
       return;
     }
     case 'type': {
-      await target.waitForSelector(step.locator, { timeout: 15000 });
-      await new Promise((r) => setTimeout(r, 300));
-      if (ctx.currentFrame) {
-        await ctx.currentFrame.type(step.locator, step.value);
-      } else {
-        await fillInputByDom(b, step.locator, step.value);
+      const typeLoc = getLocator(ctx, step.locator);
+      await typeLoc.type(step.value);
+      if (!ctx.currentFrame) {
+        await Promise.race([
+          b.waitForLoad(),
+          new Promise<void>((r) => setTimeout(r, 2000)),
+        ]).catch(() => {});
       }
       return;
     }
     case 'click': {
-      await target.waitForSelector(step.locator, { timeout: 15000 });
-      await target.click(step.locator);
-      // Wait for load only if we might have navigated; use short timeout so we don't hang when click only opens a dialog
+      await getLocator(ctx, step.locator).click();
       if (!ctx.currentFrame) {
         await Promise.race([
           b.waitForLoad(),
@@ -203,49 +299,41 @@ async function executeStep(ctx: RunContext, step: ConfigStep): Promise<void> {
       return;
     }
     case 'doubleClick': {
-      await target.waitForSelector(step.locator, { timeout: 15000 });
-      await target.doubleClick(step.locator);
+      await getLocator(ctx, step.locator).doubleClick();
       return;
     }
     case 'rightClick': {
-      await target.waitForSelector(step.locator, { timeout: 15000 });
-      await target.rightClick(step.locator);
+      await getLocator(ctx, step.locator).rightClick();
       return;
     }
     case 'hover': {
-      await target.waitForSelector(step.locator, { timeout: 15000 });
-      await target.hover(step.locator);
+      await getLocator(ctx, step.locator).hover();
       return;
     }
     case 'dragAndDrop': {
       const src = (step as { sourceLocator: string }).sourceLocator;
-      await target.waitForSelector(src, { timeout: 15000 });
-      await target.waitForSelector(step.locator, { timeout: 15000 });
-      await target.dragAndDrop(src, step.locator);
+      await getLocator(ctx, src).dragTo(step.locator);
       return;
     }
     case 'check': {
-      await target.waitForSelector(step.locator, { timeout: 15000 });
-      await target.check(step.locator);
+      await getLocator(ctx, step.locator).check();
       return;
     }
     case 'uncheck': {
-      await target.waitForSelector(step.locator, { timeout: 15000 });
-      await target.uncheck(step.locator);
+      await getLocator(ctx, step.locator).uncheck();
       return;
     }
     case 'select': {
-      await target.waitForSelector(step.locator, { timeout: 15000 });
       const opt = step.option.value != null ? { value: step.option.value } : { label: step.option.label! };
-      await target.select(step.locator, opt);
+      await getLocator(ctx, step.locator).select(opt);
       return;
     }
     case 'verifyText': {
       let actual: string;
       if (step.selector) {
-        const loc = ctx.currentFrame ? ctx.currentFrame.locator(step.selector) : b.locator(step.selector);
-        const locator = step.index !== undefined ? loc.nth(step.index) : loc;
-        actual = await locator.textContent();
+        let loc = getLocator(ctx, step.selector);
+        if (step.index !== undefined) loc = loc.nth(step.index);
+        actual = await loc.textContent();
         // Element: exact match (trimmed, case-insensitive) so checkbox input (empty) or "Wednesday" won't pass for "monday"
         const actualTrimmed = actual.trim();
         const expectedTrimmed = step.expected.trim();
@@ -274,8 +362,8 @@ async function executeStep(ctx: RunContext, step: ConfigStep): Promise<void> {
       return;
     }
     case 'assertTextEqualsAttribute': {
-      const attrLoc = ctx.currentFrame ? ctx.currentFrame.locator(step.attrSelector) : b.locator(step.attrSelector);
-      const textLoc = ctx.currentFrame ? ctx.currentFrame.locator(step.textSelector) : b.locator(step.textSelector);
+      const attrLoc = getLocator(ctx, step.attrSelector);
+      const textLoc = getLocator(ctx, step.textSelector);
       const attrValue = await attrLoc.getAttribute(step.attributeName);
       const textValue = await textLoc.textContent();
       const a = (attrValue ?? '').trim().toLowerCase();
@@ -288,7 +376,7 @@ async function executeStep(ctx: RunContext, step: ConfigStep): Promise<void> {
       return;
     }
     case 'assertAttribute': {
-      const loc = ctx.currentFrame ? ctx.currentFrame.locator(step.selector) : b.locator(step.selector);
+      const loc = getLocator(ctx, step.selector);
       const attrValue = await loc.getAttribute(step.attributeName);
       const actual = (attrValue ?? '').trim();
       const expectedTrimmed = step.expected.trim();
@@ -297,6 +385,62 @@ async function executeStep(ctx: RunContext, step: ConfigStep): Promise<void> {
           `assertAttribute failed: ${step.selector} attr ${step.attributeName} expected "${expectedTrimmed}", got "${actual}"`
         );
       }
+      return;
+    }
+    case 'getText': {
+      const loc = getLocator(ctx, step.selector);
+      const text = await loc.textContent();
+      const stored = (text ?? '').trim();
+      const varName = step.variable ?? 'lastText';
+      ctx.variables[varName] = stored;
+      return;
+    }
+    case 'display': {
+      if (step.isVariable) {
+        const val = ctx.variables[step.selectorOrVariable];
+        console.log('      [display]', val !== undefined ? val : '(undefined)');
+      } else {
+        const loc = getLocator(ctx, step.selectorOrVariable);
+        const text = await loc.textContent();
+        console.log('      [display]', (text ?? '').trim());
+      }
+      return;
+    }
+    case 'assertVar': {
+      const actual = ctx.variables[step.variable];
+      const expectedTrimmed = step.expected.trim();
+      if (actual === undefined) {
+        throw new Error(`assertVar failed: variable $${step.variable} is not set. Use getText=selector=${step.variable} first.`);
+      }
+      if (actual.trim() !== expectedTrimmed) {
+        throw new Error(`assertVar failed: $${step.variable} expected "${expectedTrimmed}", got "${actual}"`);
+      }
+      return;
+    }
+    case 'forEach': {
+      const base = (ctx.currentFrame ?? b).locator(step.selector);
+      const count = await getSelectorCount(ctx, step.selector);
+      for (let i = 0; i < count; i++) {
+        ctx.currentLoopLocator = base.nth(i);
+        try {
+          await runSteps(ctx, step.body);
+        } finally {
+          ctx.currentLoopLocator = null;
+        }
+      }
+      return;
+    }
+    case 'if': {
+      let conditionMet: boolean;
+      if (step.varName != null) {
+        const val = ctx.variables[step.varName];
+        conditionMet = val !== undefined && val.trim() === step.expected.trim();
+      } else {
+        const loc = getLocator(ctx, step.selector!);
+        const text = (await loc.textContent() ?? '').trim();
+        conditionMet = text === step.expected.trim();
+      }
+      if (conditionMet) await runSteps(ctx, step.body);
       return;
     }
   }
@@ -312,7 +456,7 @@ export interface RunConfigResult extends RunResult {
  */
 export async function runConfigFile(
   configPath: string,
-  options?: { headless?: boolean; browser?: BrowserType }
+  options?: { headless?: boolean; browser?: BrowserType; pauseOnFailure?: boolean }
 ): Promise<RunConfigResult> {
   const parsed = parseConfigFile(configPath);
   const { name: configName, testCases, headless: configHeadless } = parsed;
@@ -370,6 +514,8 @@ export async function runConfigFile(
         onClose: () => {
           browser = null;
         },
+        variables: {},
+        currentLoopLocator: null,
       };
       for (let i = 0; i < steps.length; i++) {
         const step = steps[i];
@@ -404,6 +550,18 @@ export async function runConfigFile(
           failedStepIndex,
           file: configName,
         });
+        if (options?.pauseOnFailure) {
+          if (process.stdin.isTTY) {
+            await waitForEnter(
+              '  Browser left open for debugging. Inspect the page, fix your .conf, then press Enter to close the browser.'
+            );
+          } else {
+            console.log(
+              '  (--pause-on-failure ignored: stdin is not a TTY; browser will close so CI does not hang.)'
+            );
+          }
+          break;
+        }
       } else {
         result.passed++;
         result.passedTests!.push({

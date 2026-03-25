@@ -5,13 +5,17 @@
 
 import type { TestCase, TestSuite, RunResult, TestFn, HookFn, TestTagOptions } from './types';
 import { AssertionError } from './assertions';
+import { waitForEnter } from './wait-for-enter';
+import { mergeTestTags, normalizeTestTag, normalizeTestTagList } from './tags';
 
 let rootSuite: TestSuite = makeSuite('root');
 let currentSuite: TestSuite = rootSuite;
 let hasOnly = false;
 
-/** Tags filter for this run (e.g. ['smoke','regression']). Empty = run all. Set by run({ tags }). */
+/** Include filter: run tests that have any of these tags (normalized). Empty = no include filter. */
 let runTagFilter: string[] = [];
+/** Exclude: skip tests that have any of these tags (normalized). Applied after include logic. */
+let runTagExclude: string[] = [];
 
 /** Steps recorded during the current test (for report). Cleared before each test. */
 let currentSteps: string[] = [];
@@ -44,6 +48,7 @@ function resetRunner(): void {
   currentSuite = rootSuite;
   hasOnly = false;
   runTagFilter = [];
+  runTagExclude = [];
 }
 
 export function describe(name: string, fn: () => void): void;
@@ -52,7 +57,7 @@ export function describe(name: string, optionsOrFn: TestTagOptions | (() => void
   const opts = fn !== undefined ? (optionsOrFn as TestTagOptions) : undefined;
   const runFn = typeof fn === 'function' ? fn : (optionsOrFn as () => void);
   const parent = currentSuite;
-  const suite = makeSuite(name, opts?.tags);
+  const suite = makeSuite(name, normalizeTestTagList(opts?.tags));
   parent.suites.push(suite);
   currentSuite = suite;
   runFn();
@@ -85,16 +90,19 @@ export function it(name: string, options: TestTagOptions, fn: TestFn): void;
 export function it(name: string, optionsOrFn: TestTagOptions | TestFn, fn?: TestFn): void {
   const opts = fn !== undefined ? (optionsOrFn as TestTagOptions) : undefined;
   const runFn = typeof (fn ?? optionsOrFn) === 'function' ? (fn ?? optionsOrFn) as TestFn : (optionsOrFn as TestFn);
-  currentSuite.tests.push({ name, fn: runFn, only: false, skip: false, tags: opts?.tags });
+  const tags = mergeTestTags(name, opts?.tags);
+  currentSuite.tests.push({ name, fn: runFn, only: false, skip: false, tags });
 }
 
 it.only = function itOnly(name: string, fn: TestFn): void {
-  currentSuite.tests.push({ name, fn, only: true, skip: false });
+  const tags = mergeTestTags(name, undefined);
+  currentSuite.tests.push({ name, fn, only: true, skip: false, tags });
   hasOnly = true;
 };
 
 it.skip = function itSkip(name: string, fn: TestFn): void {
-  currentSuite.tests.push({ name, fn, only: false, skip: true });
+  const tags = mergeTestTags(name, undefined);
+  currentSuite.tests.push({ name, fn, only: false, skip: true, tags });
 };
 
 export function beforeAll(fn: HookFn): void {
@@ -131,20 +139,25 @@ function suiteHasOnly(s: TestSuite): boolean {
   return s.suites.some(suiteHasOnly);
 }
 
-/** Collect all tags for a test: from suite chain (path) + test's own tags. */
+/** Collect all tags for a test: from suite chain (path) + test's own tags (normalized). */
 function getEffectiveTags(suitePath: TestSuite[], test: TestCase): string[] {
   const set = new Set<string>();
   for (const s of suitePath) {
-    if (s.tags) for (const t of s.tags) set.add(t);
+    if (s.tags) for (const t of s.tags) set.add(normalizeTestTag(t));
   }
-  if (test.tags) for (const t of test.tags) set.add(t);
+  if (test.tags) for (const t of test.tags) set.add(normalizeTestTag(t));
   return Array.from(set);
 }
 
-/** True if test should run when tag filter is active (effective tags intersect filter). */
+/**
+ * Include: if runTagFilter non-empty, test must have at least one of those tags.
+ * Exclude: if test has any runTagExclude tag, skip.
+ */
 function testMatchesTagFilter(effectiveTags: string[]): boolean {
+  const eff = effectiveTags;
+  if (runTagExclude.length > 0 && runTagExclude.some((ex) => eff.includes(ex))) return false;
   if (runTagFilter.length === 0) return true;
-  return effectiveTags.some((t) => runTagFilter.includes(t));
+  return eff.some((t) => runTagFilter.includes(t));
 }
 
 async function runSuite(
@@ -152,8 +165,11 @@ async function runSuite(
   path: string,
   suitePath: TestSuite[],
   result: RunResult,
-  startTime: number
+  startTime: number,
+  options: RunOptions | undefined,
+  abort: { value: boolean }
 ): Promise<void> {
+  if (abort.value) return;
   if (!shouldRunSuite(suite)) return;
 
   const fullPath = path ? `${path} > ${suite.name}` : suite.name;
@@ -162,6 +178,7 @@ async function runSuite(
   await runHooks(suite.beforeAll);
 
   for (const test of suite.tests) {
+    if (abort.value) break;
     const effectiveTags = getEffectiveTags(nextSuitePath, test);
     const tagMatch = testMatchesTagFilter(effectiveTags);
     const runTest = !test.skip && (!hasOnly || test.only) && tagMatch;
@@ -210,27 +227,55 @@ async function runSuite(
         file: currentRunFile,
         tags: effectiveTags.length ? effectiveTags : undefined,
       });
+      if (options?.pauseOnFailure) {
+        if (process.stdin.isTTY) {
+          await waitForEnter(
+            '  Browser left open for debugging. Inspect the page, fix your test, then press Enter to continue (afterAll will close the browser).'
+          );
+        } else {
+          console.log(
+            '  (--pause-on-failure ignored: stdin is not a TTY; continuing so CI does not hang.)'
+          );
+        }
+        abort.value = true;
+        break;
+      }
     }
   }
 
   for (const child of suite.suites) {
-    await runSuite(child, fullPath, nextSuitePath, result, startTime);
+    if (abort.value) break;
+    await runSuite(child, fullPath, nextSuitePath, result, startTime, options, abort);
   }
 
   await runHooks(suite.afterAll);
 }
 
 export interface RunOptions {
-  /** Run only tests that have at least one of these tags (e.g. ['smoke','regression']). */
+  /**
+   * Run only tests that have at least one of these tags (OR). Names are normalized (@smoke = smoke).
+   * Example: `['smoke','sanity']` or CLI `--tag smoke,sanity`.
+   */
   tags?: string[];
+  /**
+   * Skip tests that have any of these tags (even if they match `tags`). Normalized like `tags`.
+   * Example: `--skip-tag slow` or `excludeTags: ['flaky']`.
+   */
+  excludeTags?: string[];
   /** Source file path for report grouping (e.g. relative path from CLI). */
   file?: string;
+  /**
+   * After the first failing test, wait for Enter (if stdin is a TTY) so you can inspect the browser,
+   * then stop running further tests in this file so afterAll can tear down.
+   */
+  pauseOnFailure?: boolean;
 }
 
 let currentRunFile: string | undefined;
 
 export async function run(options?: RunOptions): Promise<RunResult> {
-  runTagFilter = options?.tags ?? [];
+  runTagFilter = (options?.tags ?? []).map(normalizeTestTag).filter(Boolean);
+  runTagExclude = (options?.excludeTags ?? []).map(normalizeTestTag).filter(Boolean);
   currentRunFile = options?.file;
   const result: RunResult = {
     passed: 0,
@@ -243,7 +288,8 @@ export async function run(options?: RunOptions): Promise<RunResult> {
     skippedTests: [],
   };
   const start = Date.now();
-  await runSuite(rootSuite, '', [], result, start);
+  const abort = { value: false };
+  await runSuite(rootSuite, '', [], result, start, options, abort);
   result.duration = Date.now() - start;
   return result;
 }

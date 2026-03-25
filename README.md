@@ -49,6 +49,15 @@ npx cstesting "**/*.test.js"
 npx cstesting tests/
 ```
 
+### Tags (`@sanity`, `@smoke`, …)
+
+- **On tests:** Put tags in the name — `it('@sanity @smoke logs in', async () => { ... })` — and/or use options: `it('logs in', { tags: ['sanity', 'smoke'] }, async () => { ... })`. Suite-level: `describe('Checkout', { tags: ['e2e'] }, () => { ... })` (child tests inherit suite tags).
+- **Include (OR):** Run tests that have **any** listed tag: `npx cstesting --tag smoke` or `npx cstesting -t smoke,sanity` (also `--tags` and `--tag=smoke,sanity`). `@smoke` on the CLI is optional; matching is case-insensitive.
+- **Exclude:** Skip tests that have a tag: `npx cstesting --skip-tag slow` or `--skip-tags slow,flaky` (`--exclude-tag` / `--exclude-tags` are the same).
+- **Together:** `npx cstesting --tag smoke --skip-tag slow` runs smoke tests except those also tagged `slow`.
+- **Programmatic:** `await run({ tags: ['smoke'], excludeTags: ['slow'] });`
+- **Full reference:** [docs/tag-based-runs.md](docs/tag-based-runs.md)
+
 ### Page Object Model (POM)
 
 After installing, scaffold a **pages** and **tests** structure with sample code:
@@ -96,6 +105,10 @@ Run tests from a **config file** without writing code. One function: pick file, 
 - `goto:<url>` — open URL
 - `<label>:<locator>=value:<text>` — type text into element (e.g. `username:#email=value:john`)
 - `click=<locator>` — click element (e.g. `click=button[type="submit"]`)
+- **Loop (repeat N times):** `loop:N` … steps … `endLoop`
+- **For-each (over elements):** `forEach:<selector>` … steps … `endForEach` — loops over each match (e.g. `forEach:table tr`, `forEach:select option`). Inside the loop use **`>>selector`** for same row/cell (e.g. `getText=>>td:nth-child(1)`, `click=>>button`).
+- **If condition:** `if:$varName=value` … `endIf` or `if:<selector>=value` … `endIf` — run steps only when variable or element text equals value.
+- **Get text / display / assert variable:** `getText=<selector>` or `getText=<selector>=varName`, `display=<selector>` or `display=$varName`, `assertVar=$varName=expected`
 
 **Example** `login.conf`:
 
@@ -119,6 +132,27 @@ npx cstesting login.conf
 All steps under a `#` section run as **one test case** in order; pass/fail is for the whole case and the HTML report shows one row per test case with expandable steps.
 
 **Programmatic:** `const { runConfigFile } = require('cstesting'); const result = await runConfigFile('login.conf');`
+
+### Screen compare and text layout (visual testing)
+
+Three modes address common disadvantages of pixel-only screenshot comparison:
+
+| Type | Purpose | Config / API |
+|------|--------|--------------|
+| **Type 1** | Compare screenshots when **old and new have different height/width** | `assertScreenshot=baseline.png=resize` — resizes actual to baseline size then compares (optional `=0.1` for threshold). Programmatic: `compareScreenshots(actual, baseline, { resizeMode: 'actualToBaseline' })`. |
+| **Type 2** | Check that **text is not overlapping** other text (layout regression) | `assertNoOverlappingText` — fails if any visible text overlaps another. Programmatic: `checkOverlappingText(browser)` → `{ overlapping, allTextRects }`. |
+| **Type 3** | Verify **no overlapping or hidden text** (no exact text match) | `assertNoHiddenOrOverlappingText` — fails if any text is hidden (visibility, opacity, overflow, etc.) or overlaps. Programmatic: `checkHiddenOrOverlappingText(browser)` → `{ overlapping, hidden, allTextRects }`. |
+
+**Config example:**
+
+```conf
+goto:https://example.com/
+assertScreenshot=baselines/home.png=resize
+assertNoOverlappingText
+assertNoHiddenOrOverlappingText
+```
+
+**Dependencies:** Type 1 uses optional `pixelmatch` and `pngjs`; install with `npm install pixelmatch pngjs` if you use screenshot comparison.
 
 ### Record and export to .conf / .js / .ts (Codegen)
 

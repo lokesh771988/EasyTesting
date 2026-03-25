@@ -3,3 +3,6 @@ dist/
 *.log
 .DS_Store
 .playwright-mcp/
+assets/
+docs/
+publish.md

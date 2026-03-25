@@ -16,3 +16,13 @@ export type { BrowserApi, CreateBrowserOptions, LocatorApi, DialogHandler, TabIn
 export type { ParsedConfig, ConfigStep, ConfigTestCase } from './config-parser';
 export type { RunConfigResult } from './config-runner';
 export type { ApiResponse, RequestOptions, HttpMethod } from './api-request';
+export { compareScreenshots } from './visual-compare';
+export type { CompareResult, CompareScreenshotsOptions } from './visual-compare';
+export { checkOverlappingText, checkHiddenOrOverlappingText } from './text-layout-check';
+export type {
+  OverlappingTextResult,
+  OverlappingPair,
+  TextRect,
+  HiddenAndOverlappingResult,
+  HiddenTextItem,
+} from './text-layout-check';

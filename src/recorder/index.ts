@@ -12,7 +12,7 @@ import CDP from 'chrome-remote-interface';
 import { launchChrome, launchBrowser, type BrowserType } from '../browser/launch';
 import { fetchBrowserWebSocketUrl } from '../browser';
 import type { RecordedStep } from './recorded-step';
-import { toConf, toJs, toTs, toJava } from './exporters';
+import { toConf, toJs, toTs, toJava, toCs } from './exporters';
 import { createInspectorServer } from './inspector-server';
 
 function askDialogInTerminal(
@@ -179,8 +179,8 @@ else window.addEventListener('load',function(){if(location.href&&location.href!=
 export interface RecordOptions {
   /** Output file path. Default: recorded.conf (or .js/.ts/.java based on format). */
   output?: string;
-  /** Export format: conf | js | ts | java. Default: conf. */
-  format?: 'conf' | 'js' | 'ts' | 'java';
+  /** Export format: conf | js | ts | java | cs. Default: conf. */
+  format?: 'conf' | 'js' | 'ts' | 'java' | 'cs';
 }
 
 const recordedSteps: RecordedStep[] = [];
@@ -476,6 +476,9 @@ export function exportRecorded(options: RecordOptions = {}): string {
   } else if (format === 'ts') {
     content = toTs(steps);
     ext = '.test.ts';
+  } else if (format === 'cs') {
+    content = toCs(steps);
+    ext = '.cs';
   } else {
     content = toJava(steps);
     ext = '.java';
@@ -487,5 +490,5 @@ export function exportRecorded(options: RecordOptions = {}): string {
   return outPath;
 }
 
-export { toConf, toJs, toTs, toJava } from './exporters';
+export { toConf, toJs, toTs, toJava, toCs } from './exporters';
 export type { RecordedStep, RecordedAction } from './recorded-step';

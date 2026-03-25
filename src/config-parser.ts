@@ -11,6 +11,13 @@ import * as path from 'path';
  *   goto:<url>                    - navigate to URL (optional, use at start)
  *   <label>:<locator>=value:<text> - type text into element (e.g. name:#user=value:john)
  *   click=<locator>               - click element (e.g. click=button[type="submit"])
+ *   loop:N ... endLoop            - repeat steps N times
+ *   forEach:<selector> ... endForEach - loop over each element (e.g. table rows, dropdown options); use >>sel inside for same row/cell
+ *   if:$var=value ... endIf       - run steps only if variable equals value
+ *   if:<selector>=value ... endIf - run steps only if element text equals value
+ *   getText=<selector> [=varName] - store element text in $lastText or $varName
+ *   display=<selector> | display=$var - print element text or variable to console
+ *   assertVar=$var=expected       - assert stored variable equals expected
  *
  * Example (one test case "Login Page - Mercury Tours" with 4 steps):
  *   # Login Page - Mercury Tours
@@ -39,7 +46,15 @@ export type ConfigStep =
   | { action: 'close' }  // close browser (next test case will get a new browser if needed)
   | { action: 'verifyText'; expected: string; selector?: string; index?: number }  // assertText: verify page or element
   | { action: 'assertTextEqualsAttribute'; textSelector: string; attrSelector: string; attributeName: string }  // assert text equals attr value
-  | { action: 'assertAttribute'; selector: string; attributeName: string; expected: string };  // assert element attribute value equals expected
+  | { action: 'assertAttribute'; selector: string; attributeName: string; expected: string }  // assert element attribute value equals expected
+  | { action: 'assertScreenshot'; baselinePath: string; threshold?: number; resize?: boolean }  // visual regression; resize=true allows different dimensions (Type 1)
+  | { action: 'assertNoOverlappingText' }  // Type 2: fail if any text overlaps other text
+  | { action: 'assertNoHiddenOrOverlappingText' }  // Type 3: fail if any hidden or overlapping text
+  | { action: 'getText'; selector: string; variable?: string }  // get element text → $lastText or $varName
+  | { action: 'display'; selectorOrVariable: string; isVariable: boolean }  // display=selector or display=$varName
+  | { action: 'assertVar'; variable: string; expected: string }  // assertVar=$name=expected
+  | { action: 'forEach'; selector: string; body: ConfigStep[] }  // loop over each element; use >>selector inside for same row/cell
+  | { action: 'if'; varName?: string; selector?: string; expected: string; body: ConfigStep[] };  // if:$var=value or if:selector=value
 
 /** One test case: a name (from # line) and its steps. */
 export interface ConfigTestCase {
@@ -143,6 +158,40 @@ function parseLine(line: string): ConfigStep | null {
   // close or closeBrowser — close the browser (next test case gets a new one)
   if (/^closeBrowser?$/i.test(trimmed)) return { action: 'close' };
 
+  // getText=selector or getText=selector=varName
+  const getTextMatch = trimmed.match(/^getText=(.+)$/i);
+  if (getTextMatch) {
+    const rest = getTextMatch[1].trim();
+    const eq = rest.indexOf('=');
+    if (eq > 0) {
+      const selector = rest.slice(0, eq).trim();
+      const variable = rest.slice(eq + 1).trim();
+      if (selector && variable) return { action: 'getText', selector, variable };
+    }
+    return { action: 'getText', selector: rest };
+  }
+
+  // display=selector or display=$varName
+  const displayMatch = trimmed.match(/^display=(.+)$/i);
+  if (displayMatch) {
+    const val = displayMatch[1].trim();
+    if (val.startsWith('$')) return { action: 'display', selectorOrVariable: val.slice(1).trim(), isVariable: true };
+    return { action: 'display', selectorOrVariable: val, isVariable: false };
+  }
+
+  // assertVar=$varName=expected
+  const assertVarMatch = trimmed.match(/^assertVar=(.+)$/i);
+  if (assertVarMatch) {
+    const rest = assertVarMatch[1].trim();
+    const varName = rest.startsWith('$') ? rest.slice(1) : rest;
+    const eq = varName.indexOf('=');
+    if (eq > 0) {
+      const v = varName.slice(0, eq).trim();
+      const expected = varName.slice(eq + 1).trim();
+      if (v) return { action: 'assertVar', variable: v, expected };
+    }
+  }
+
   // assertTextEqualsAttribute=textSelector=attrSelector=attr:attributeName — assert text of textSelector equals attribute value of attrSelector
   const assertTextEqualsAttrMatch = trimmed.match(/^assertTextEqualsAttribute=(.+)$/i);
   if (assertTextEqualsAttrMatch) {
@@ -213,6 +262,24 @@ function parseLine(line: string): ConfigStep | null {
     return { action: 'verifyText', expected, selector };
   }
 
+  // assertScreenshot=baseline.png [=threshold] [=resize] — Type 1: visual regression; =resize allows different height/width
+  const assertScreenshotMatch = trimmed.match(/^assertScreenshot=(.+)$/i);
+  if (assertScreenshotMatch) {
+    const rest = assertScreenshotMatch[1].trim();
+    const parts = rest.split('=').map((s) => s.trim());
+    const baselinePath = parts[0] || '';
+    let threshold: number | undefined;
+    let resize = false;
+    for (let i = 1; i < parts.length; i++) {
+      if (parts[i].toLowerCase() === 'resize') resize = true;
+      else if (!Number.isNaN(parseFloat(parts[i]))) threshold = parseFloat(parts[i]);
+    }
+    return { action: 'assertScreenshot', baselinePath, ...(threshold !== undefined && { threshold }), ...(resize && { resize: true }) };
+  }
+
+  if (/^assertNoOverlappingText$/i.test(trimmed)) return { action: 'assertNoOverlappingText' };
+  if (/^assertNoHiddenOrOverlappingText$/i.test(trimmed)) return { action: 'assertNoHiddenOrOverlappingText' };
+
   // frame=main | frame=selector | frame=sel1,sel2 (nested)
   const frameMatch = trimmed.match(/^frame=(.+)$/);
   if (frameMatch) {
@@ -272,6 +339,36 @@ function parseHeadlessOption(line: string): boolean | undefined {
   return undefined;
 }
 
+function parseLoopLine(line: string): number | undefined {
+  const m = line.trim().match(/^loop:(\d+)$/i);
+  return m ? parseInt(m[1], 10) : undefined;
+}
+function isEndLoopLine(line: string): boolean {
+  return /^endLoop$/i.test(line.trim());
+}
+function parseForEachLine(line: string): string | undefined {
+  const m = line.trim().match(/^forEach:(.+)$/i);
+  return m ? m[1].trim() : undefined;
+}
+function isEndForEachLine(line: string): boolean {
+  return /^endForEach$/i.test(line.trim());
+}
+/** Returns { varName, expected } or { selector, expected } for if:$var=value or if:selector=value */
+function parseIfLine(line: string): { varName?: string; selector?: string; expected: string } | undefined {
+  const m = line.trim().match(/^if:(.+)$/i);
+  if (!m) return undefined;
+  const rest = m[1].trim();
+  const eq = rest.indexOf('=');
+  if (eq <= 0) return undefined;
+  const left = rest.slice(0, eq).trim();
+  const expected = rest.slice(eq + 1).trim();
+  if (left.startsWith('$')) return { varName: left.slice(1).trim(), expected };
+  return { selector: left, expected };
+}
+function isEndIfLine(line: string): boolean {
+  return /^endIf$/i.test(line.trim());
+}
+
 /**
  * Read config file and return parsed test cases and options.
  * Lines starting with # start a new test case (name = rest of line). All following steps belong to it until the next #.
@@ -293,21 +390,86 @@ export function parseConfigFile(filePath: string): ParsedConfig {
     }
   }
 
+  let collectingLoop = false;
+  let loopCount = 0;
+  let loopBody: ConfigStep[] = [];
+  const blockStack: ConfigStep[][] = [];
+
+  function getCurrentTarget(): ConfigStep[] {
+    return blockStack.length > 0 ? blockStack[blockStack.length - 1] : currentSteps;
+  }
+  function flushLoop(): void {
+    if (collectingLoop) {
+      for (let i = 0; i < loopCount; i++) getCurrentTarget().push(...loopBody);
+      collectingLoop = false;
+    }
+  }
+
   for (const line of lines) {
     const trimmed = line.trim();
     if (trimmed.startsWith('#')) {
+      if (blockStack.length > 0) {
+        continue;
+      }
+      flushLoop();
       pushCurrent();
       currentName = trimmed.slice(1).trim() || 'Unnamed';
       continue;
     }
     const headlessOpt = parseHeadlessOption(line);
     if (headlessOpt !== undefined) {
+      flushLoop();
       headless = headlessOpt;
       continue;
     }
+    const loopN = parseLoopLine(line);
+    if (loopN !== undefined && loopN > 0) {
+      flushLoop();
+      collectingLoop = true;
+      loopCount = loopN;
+      loopBody = [];
+      continue;
+    }
+    if (isEndLoopLine(line)) {
+      flushLoop();
+      continue;
+    }
+    const forEachSel = parseForEachLine(line);
+    if (forEachSel !== undefined) {
+      flushLoop();
+      const forEachStep: ConfigStep = { action: 'forEach', selector: forEachSel, body: [] };
+      getCurrentTarget().push(forEachStep);
+      blockStack.push(forEachStep.body);
+      continue;
+    }
+    if (isEndForEachLine(line)) {
+      flushLoop();
+      if (blockStack.length > 0) blockStack.pop();
+      continue;
+    }
+    const ifCond = parseIfLine(line);
+    if (ifCond !== undefined) {
+      flushLoop();
+      const ifStep: ConfigStep =
+        ifCond.varName != null
+          ? { action: 'if', varName: ifCond.varName, expected: ifCond.expected, body: [] }
+          : { action: 'if', selector: ifCond.selector, expected: ifCond.expected, body: [] };
+      getCurrentTarget().push(ifStep);
+      blockStack.push(ifStep.body);
+      continue;
+    }
+    if (isEndIfLine(line)) {
+      flushLoop();
+      if (blockStack.length > 0) blockStack.pop();
+      continue;
+    }
     const step = parseLine(line);
-    if (step) currentSteps.push(step);
+    if (step) {
+      if (collectingLoop) loopBody.push(step);
+      else getCurrentTarget().push(step);
+    }
   }
+  flushLoop();
   pushCurrent();
 
   return { name, headless, testCases };

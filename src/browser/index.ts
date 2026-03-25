@@ -232,6 +232,8 @@ export interface LocatorApi {
   last(): LocatorApi;
   /** Use the nth matching element (0-based index). */
   nth(index: number): LocatorApi;
+  /** Find a descendant matching the given selector (e.g. for same-row: rowLocator.locator('td')). */
+  locator(selector: string): LocatorApi;
 }
 
 export interface BrowserApi {
@@ -378,62 +380,85 @@ export async function createBrowser(options: CreateBrowserOptions = {}): Promise
   let page = createPage(client);
   const onStep = options.onStep;
 
-  function createLocator(selector: string, index?: LocatorIndex): LocatorApi {
+  type LocatorScope = { selector: string; index: LocatorIndex };
+
+  function createLocator(selector: string, index?: LocatorIndex, scope?: LocatorScope): LocatorApi {
+    const scopeSuffix =
+      scope?.index === 'last'
+        ? ':last-of-type'
+        : scope
+          ? ':nth-of-type(' +
+            (scope.index === 'first' || scope.index === 0 ? 1 : (scope.index as number) + 1) +
+            ')'
+          : '';
+    const scopePart = scope ? scope.selector + scopeSuffix : '';
+    const effectiveSelector =
+      scope && scopePart
+        ? selector.includes(',')
+          ? selector
+              .split(',')
+              .map((s) => scopePart + ' ' + s.trim())
+              .join(', ')
+          : scopePart + ' ' + selector
+        : selector;
+    const effectiveIndex = scope ? undefined : index;
     return {
       click: async () => {
-        onStep?.(`Click ${selector}`);
-        return page.click(selector, index);
+        onStep?.(`Click ${effectiveSelector}`);
+        return page.click(effectiveSelector, effectiveIndex);
       },
       doubleClick: async () => {
-        onStep?.(`Double click ${selector}`);
-        return page.doubleClick(selector, index);
+        onStep?.(`Double click ${effectiveSelector}`);
+        return page.doubleClick(effectiveSelector, effectiveIndex);
       },
       rightClick: async () => {
-        onStep?.(`Right click ${selector}`);
-        return page.rightClick(selector, index);
+        onStep?.(`Right click ${effectiveSelector}`);
+        return page.rightClick(effectiveSelector, effectiveIndex);
       },
       hover: async () => {
-        onStep?.(`Hover ${selector}`);
-        return page.hover(selector, index);
+        onStep?.(`Hover ${effectiveSelector}`);
+        return page.hover(effectiveSelector, effectiveIndex);
       },
       dragTo: async (targetSelector: string) => {
-        onStep?.(`Drag ${selector} to ${targetSelector}`);
-        return page.dragAndDrop(selector, targetSelector, index);
+        onStep?.(`Drag ${effectiveSelector} to ${targetSelector}`);
+        return page.dragAndDrop(effectiveSelector, targetSelector, effectiveIndex);
       },
       type: async (text: string) => {
-        onStep?.(`Type in ${selector}`);
-        return page.type(selector, text, index);
+        onStep?.(`Type in ${effectiveSelector}`);
+        return page.type(effectiveSelector, text, effectiveIndex);
       },
       select: async (option: SelectOptionOrOptions) => {
-        onStep?.(`Select in ${selector}`);
-        return page.select(selector, option, index);
+        onStep?.(`Select in ${effectiveSelector}`);
+        return page.select(effectiveSelector, option, effectiveIndex);
       },
       check: async () => {
-        onStep?.(`Check ${selector}`);
-        return page.check(selector, index);
+        onStep?.(`Check ${effectiveSelector}`);
+        return page.check(effectiveSelector, effectiveIndex);
       },
       uncheck: async () => {
-        onStep?.(`Uncheck ${selector}`);
-        return page.uncheck(selector, index);
+        onStep?.(`Uncheck ${effectiveSelector}`);
+        return page.uncheck(effectiveSelector, effectiveIndex);
       },
       pressKey: (key: string) => page.pressKey(key),
       textContent: async () => {
-        onStep?.(`Get textContent ${selector}`);
-        return page.getTextContent(selector, index);
+        onStep?.(`Get textContent ${effectiveSelector}`);
+        return page.getTextContent(effectiveSelector, effectiveIndex);
       },
       getAttribute: async (attributeName: string) => {
-        onStep?.(`Get attribute ${attributeName} of ${selector}`);
-        return page.getAttribute(selector, attributeName, index);
+        onStep?.(`Get attribute ${attributeName} of ${effectiveSelector}`);
+        return page.getAttribute(effectiveSelector, attributeName, effectiveIndex);
       },
-      isVisible: () => page.isVisible(selector, index),
-      isDisabled: () => page.isDisabled(selector, index),
-      isEditable: () => page.isEditable(selector, index),
-      isSelected: () => page.isSelected(selector, index),
+      isVisible: () => page.isVisible(effectiveSelector, effectiveIndex),
+      isDisabled: () => page.isDisabled(effectiveSelector, effectiveIndex),
+      isEditable: () => page.isEditable(effectiveSelector, effectiveIndex),
+      isSelected: () => page.isSelected(effectiveSelector, effectiveIndex),
       screenshot: (options?: { path?: string; format?: 'png' | 'jpeg'; quality?: number }) =>
-        page.getScreenshot({ ...options, selector, index }),
-      first: () => createLocator(selector, 'first'),
-      last: () => createLocator(selector, 'last'),
-      nth: (n: number) => createLocator(selector, n),
+        page.getScreenshot({ ...options, selector: effectiveSelector, index: effectiveIndex }),
+      first: () => createLocator(selector, 'first', scope),
+      last: () => createLocator(selector, 'last', scope),
+      nth: (n: number) => createLocator(selector, n, scope),
+      locator: (innerSelector: string) =>
+        createLocator(innerSelector, undefined, scope ? { selector: effectiveSelector, index: 0 } : { selector, index: index ?? 0 }),
     };
   }
 
@@ -471,6 +496,11 @@ export async function createBrowser(options: CreateBrowserOptions = {}): Promise
         first: () => tabCreateLocator(selector, 'first'),
         last: () => tabCreateLocator(selector, 'last'),
         nth: (n: number) => tabCreateLocator(selector, n),
+        locator: (innerSelector: string) => {
+          const n = index === undefined || index === 'first' || index === 0 ? 1 : index === 'last' ? 'last' : (index as number) + 1;
+          const combined = n === 'last' ? selector + ':last-of-type ' + innerSelector : selector + ':nth-of-type(' + n + ') ' + innerSelector;
+          return tabCreateLocator(combined);
+        },
       };
     }
     function tabGetByAttribute(attribute: string, attributeValue: string): LocatorApi {
@@ -696,6 +726,11 @@ export async function createBrowser(options: CreateBrowserOptions = {}): Promise
         first: () => frameCreateLocator(selector, 'first'),
         last: () => frameCreateLocator(selector, 'last'),
         nth: (n: number) => frameCreateLocator(selector, n),
+        locator: (innerSelector: string) => {
+          const n = index === undefined || index === 'first' || index === 0 ? 1 : index === 'last' ? 'last' : (index as number) + 1;
+          const combined = n === 'last' ? selector + ':last-of-type ' + innerSelector : selector + ':nth-of-type(' + n + ') ' + innerSelector;
+          return frameCreateLocator(combined);
+        },
       };
     }
     function frameGetByAttribute(attribute: string, attributeValue: string): LocatorApi {

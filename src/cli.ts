@@ -11,53 +11,14 @@ import { writeReport } from './report';
 import { runConfigFile } from './config-runner';
 import type { RunResult } from './types';
 import { startRecording, stopRecording, exportRecorded } from './recorder';
+import { runSetup } from './setup';
+import { normalizeTestTag } from './tags';
 
 const defaultPattern = '**/*.test.js';
 const TEST_EXTENSIONS = ['.test.js', '.spec.js', '.test.ts', '.spec.ts'];
 
 function isTestFile(name: string): boolean {
   return TEST_EXTENSIONS.some((ext) => name.endsWith(ext));
-}
-
-/** Get path to templates folder (next to dist when published). */
-function getTemplatesDir(): string {
-  return path.join(__dirname, '..', 'templates');
-}
-
-/**
- * Create pages/ and tests/ folders with Page Object Model sample code.
- * Run: npx cstesting init  or  npx cst init
- */
-function init(): void {
-  const cwd = process.cwd();
-  const templatesDir = getTemplatesDir();
-
-  if (!fs.existsSync(templatesDir)) {
-    console.error('Templates not found. Run init from a project that has cstesting installed.');
-    process.exit(1);
-  }
-
-  const pagesDir = path.join(cwd, 'pages');
-  const testsDir = path.join(cwd, 'tests');
-  const templatePages = path.join(templatesDir, 'pages');
-  const templateTests = path.join(templatesDir, 'tests');
-
-  if (!fs.existsSync(pagesDir)) fs.mkdirSync(pagesDir, { recursive: true });
-  if (!fs.existsSync(testsDir)) fs.mkdirSync(testsDir, { recursive: true });
-
-  const files: [string, string][] = [
-    [path.join(templatePages, 'HomePage.js'), path.join(pagesDir, 'HomePage.js')],
-    [path.join(templateTests, 'home.test.js'), path.join(testsDir, 'home.test.js')],
-  ];
-
-  for (const [src, dest] of files) {
-    if (fs.existsSync(src)) {
-      fs.copyFileSync(src, dest);
-      console.log('  Created:', path.relative(cwd, dest));
-    }
-  }
-
-  console.log('\nPage Object Model (POM) structure ready:\n  pages/     – page objects (e.g. HomePage.js)\n  tests/     – test files (*.test.js)\n\nRun tests: npx cstesting tests/\n');
 }
 
 function findTestFiles(pattern: string, cwd: string): string[] {
@@ -137,7 +98,11 @@ function resolveConfigPath(configPath: string): string | null {
 /** Run a config file (e.g. login.conf) and write report. */
 async function runConfig(
   configPath: string,
-  options?: { headless?: boolean; browser?: 'chrome' | 'edge' | 'opera' | 'firefox' }
+  options?: {
+    headless?: boolean;
+    browser?: 'chrome' | 'edge' | 'opera' | 'firefox';
+    pauseOnFailure?: boolean;
+  }
 ): Promise<void> {
   const cwd = process.cwd();
   const resolved = resolveConfigPath(configPath);
@@ -174,33 +139,66 @@ function looksLikePattern(arg: string): boolean {
   return arg.includes('/') || arg.includes('\\') || /\.(test|spec)\.(js|ts)$/i.test(arg) || /\.(conf|config)$/i.test(arg) || arg.includes('*');
 }
 
-/** Parse argv for --tag / -t and return { tags, pattern }. Reads entire argv so "file.js --tag smoke" works. */
-function parseTagArgs(): { tags: string[]; pattern: string | undefined } {
+/**
+ * Parse argv for --tag / -t (include) and --skip-tag / --exclude-tag (exclude).
+ * Tag names are normalized: @smoke and smoke match; comma-separated lists OK.
+ */
+function parseTagArgs(): { tags: string[]; excludeTags: string[]; pattern: string | undefined } {
   const tags: string[] = [];
+  const excludeTags: string[] = [];
   let pattern: string | undefined;
   const argv = process.argv.slice(2);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === FLAG_TAG || a === FLAG_TAGS || a === FLAG_T) {
       if (i + 1 < argv.length) {
-        tags.push(...argv[++i].split(',').map((s) => s.trim()).filter(Boolean));
+        tags.push(...argv[++i].split(',').map((s) => normalizeTestTag(s)).filter(Boolean));
       }
     } else if (a.startsWith('--tag=')) {
-      tags.push(...a.slice(6).split(',').map((s) => s.trim()).filter(Boolean));
+      tags.push(...a.slice(6).split(',').map((s) => normalizeTestTag(s)).filter(Boolean));
     } else if (a.startsWith('-t=')) {
-      tags.push(...a.slice(3).split(',').map((s) => s.trim()).filter(Boolean));
+      tags.push(...a.slice(3).split(',').map((s) => normalizeTestTag(s)).filter(Boolean));
+    } else if (a === '--skip-tag' || a === '--skip-tags' || a === '--exclude-tag' || a === '--exclude-tags') {
+      if (i + 1 < argv.length) {
+        excludeTags.push(...argv[++i].split(',').map((s) => normalizeTestTag(s)).filter(Boolean));
+      }
+    } else if (
+      a.startsWith('--skip-tag=') ||
+      a.startsWith('--skip-tags=') ||
+      a.startsWith('--exclude-tag=') ||
+      a.startsWith('--exclude-tags=')
+    ) {
+      const eq = a.indexOf('=');
+      excludeTags.push(...a.slice(eq + 1).split(',').map((s) => normalizeTestTag(s)).filter(Boolean));
     } else if (!a.startsWith('-') && looksLikePattern(a) && pattern === undefined) {
       pattern = a;
     }
   }
-  return { tags, pattern };
+  return { tags, excludeTags, pattern };
 }
 
 /** First non-flag argument that looks like a pattern (path or test file). */
 function firstPatternArg(): string | undefined {
   const argv = process.argv.slice(2);
-  for (const a of argv) {
-    if (a === FLAG_TAG || a === FLAG_TAGS || a === FLAG_T || a.startsWith('--tag=') || a.startsWith('-t=')) continue;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === FLAG_TAG || a === FLAG_TAGS || a === FLAG_T) {
+      if (i + 1 < argv.length) i++;
+      continue;
+    }
+    if (a.startsWith('--tag=') || a.startsWith('-t=')) continue;
+    if (a === '--skip-tag' || a === '--skip-tags' || a === '--exclude-tag' || a === '--exclude-tags') {
+      if (i + 1 < argv.length) i++;
+      continue;
+    }
+    if (
+      a.startsWith('--skip-tag=') ||
+      a.startsWith('--skip-tags=') ||
+      a.startsWith('--exclude-tag=') ||
+      a.startsWith('--exclude-tags=')
+    ) {
+      continue;
+    }
     if (a.startsWith('-') && a !== '-') continue;
     if (looksLikePattern(a)) return a;
   }
@@ -209,8 +207,8 @@ function firstPatternArg(): string | undefined {
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
-  if (argv.includes('init')) {
-    init();
+  if (argv.includes('setup') || argv.includes('init')) {
+    await runSetup();
     process.exit(0);
     return;
   }
@@ -220,11 +218,11 @@ async function main(): Promise<void> {
     const formatIdx = argv.indexOf('--format');
     const browserIdx = argv.indexOf('--browser');
     let output = outIdx !== -1 && argv[outIdx + 1] ? argv[outIdx + 1] : undefined;
-    let format: 'conf' | 'js' | 'ts' | 'java' = 'conf';
+    let format: 'conf' | 'js' | 'ts' | 'java' | 'cs' = 'conf';
     let browser: 'chrome' | 'edge' | 'opera' | 'firefox' = 'chrome';
     if (formatIdx !== -1 && argv[formatIdx + 1]) {
       const f = argv[formatIdx + 1];
-      if (f === 'js' || f === 'ts' || f === 'java') format = f;
+      if (f === 'js' || f === 'ts' || f === 'java' || f === 'cs') format = f;
     }
     if (browserIdx !== -1 && argv[browserIdx + 1]) {
       const b = String(argv[browserIdx + 1]).toLowerCase();
@@ -234,6 +232,7 @@ async function main(): Promise<void> {
       if (output.endsWith('.test.js') || output.endsWith('.js')) format = 'js';
       else if (output.endsWith('.test.ts') || output.endsWith('.ts')) format = 'ts';
       else if (output.endsWith('.java')) format = 'java';
+      else if (output.endsWith('.cs')) format = 'cs';
     }
     const recordArgv = argv.filter(
       (a) => a !== 'record' && a !== '--output' && a !== '--format' && a !== '--browser' &&
@@ -283,10 +282,13 @@ async function main(): Promise<void> {
     const runIdx = argv.indexOf('run');
     const configPath = argv[runIdx + 1];
     if (!configPath) {
-      console.error('Usage: cstesting run <config.conf> [--headed] [--browser chrome|edge|opera|firefox]');
+      console.error(
+        'Usage: cstesting run <config.conf> [--headed] [--browser chrome|edge|opera|firefox] [--pause-on-failure|--debug]'
+      );
       process.exit(1);
     }
     const headed = argv.includes('--headed');
+    const pauseOnFailure = argv.includes('--pause-on-failure') || argv.includes('--debug');
     const browserIdx = argv.indexOf('--browser');
     let browser: 'chrome' | 'edge' | 'opera' | 'firefox' | undefined;
     if (browserIdx !== -1 && argv[browserIdx + 1]) {
@@ -294,11 +296,11 @@ async function main(): Promise<void> {
       if (b === 'edge' || b === 'opera' || b === 'firefox') browser = b;
       else if (b === 'chrome') browser = 'chrome';
     }
-    await runConfig(configPath, { headless: !headed, browser });
+    await runConfig(configPath, { headless: !headed, browser, pauseOnFailure });
     return;
   }
 
-  const { tags, pattern: tagPattern } = parseTagArgs();
+  const { tags, excludeTags, pattern: tagPattern } = parseTagArgs();
   const arg = tagPattern ?? firstPatternArg();
 
   // cstesting login.conf  → run config file if extension is .conf or .config
@@ -308,6 +310,7 @@ async function main(): Promise<void> {
       const configResolved = resolveConfigPath(arg);
       if (configResolved) {
         const headed = argv.includes('--headed');
+        const pauseOnFailure = argv.includes('--pause-on-failure') || argv.includes('--debug');
         const browserIdx = argv.indexOf('--browser');
         let browser: 'chrome' | 'edge' | 'opera' | 'firefox' | undefined;
         if (browserIdx !== -1 && argv[browserIdx + 1]) {
@@ -315,7 +318,7 @@ async function main(): Promise<void> {
           if (b === 'edge' || b === 'opera' || b === 'firefox') browser = b;
           else if (b === 'chrome') browser = 'chrome';
         }
-        await runConfig(arg, { headless: !headed, browser });
+        await runConfig(arg, { headless: !headed, browser, pauseOnFailure });
         return;
       }
     }
@@ -341,8 +344,13 @@ async function main(): Promise<void> {
   }
 
   if (tags.length > 0) {
-    console.log(`Running tests with tags: ${tags.join(', ')}\n`);
+    console.log(`Running tests with any tag: ${tags.join(', ')}\n`);
   }
+  if (excludeTags.length > 0) {
+    console.log(`Skipping tests with any tag: ${excludeTags.join(', ')}\n`);
+  }
+
+  const pauseOnFailure = argv.includes('--pause-on-failure') || argv.includes('--debug');
 
   const totalResult: RunResult = {
     passed: 0,
@@ -364,9 +372,12 @@ async function main(): Promise<void> {
       process.exit(1);
     }
     const rel = path.relative(cwd, file);
-    const result = await run(
-      tags.length > 0 ? { tags, file: rel } : { file: rel }
-    );
+    const result = await run({
+      file: rel,
+      pauseOnFailure,
+      ...(tags.length > 0 ? { tags } : {}),
+      ...(excludeTags.length > 0 ? { excludeTags } : {}),
+    });
     totalResult.passed += result.passed;
     totalResult.failed += result.failed;
     totalResult.skipped += result.skipped;

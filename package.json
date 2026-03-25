@@ -1,6 +1,6 @@
 {
   "name": "cstesting",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "A simple, extensible Node.js testing framework — start with a test runner and assertions, extend with browser automation later.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -10,6 +10,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "postinstall": "node dist/cli.js setup",
     "test": "node dist/cli.js",
     "test:example": "node dist/cli.js example/",
     "example": "npm run build && npm run test:example",
@@ -27,10 +28,10 @@
   "license": "CS Technologies Telugu",
   "repository": {
     "type": "git",
-    "url": "https://github.com/lokesh771988/EasyTesting"
+    "url": "https://github.com/cstesttool/CSTesting-Nodejs"
   },
   "bugs": {
-    "url": "https://github.com/lokesh771988/EasyTesting/issues"
+    "url": "https://github.com/cstesttool/CSTesting-Nodejs/issues"
   },
   "homepage": "https://cstesting.github.io/cstesting/",
   "engines": {
@@ -46,7 +47,9 @@
     "chrome-remote-interface": "^0.33.2"
   },
   "optionalDependencies": {
-    "playwright": "^1.49.0"
+    "playwright": "^1.49.0",
+    "pixelmatch": "^6.0.0",
+    "pngjs": "^7.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",

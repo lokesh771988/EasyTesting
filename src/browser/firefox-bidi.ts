@@ -47,6 +47,7 @@ function makeLocatorApi(loc: Locator, page: Page): LocatorApi {
     first: () => makeLocatorApi(loc.first(), page),
     last: () => makeLocatorApi(loc.last(), page),
     nth: (index: number) => makeLocatorApi(loc.nth(index), page),
+    locator: (selector: string) => makeLocatorApi((loc as unknown as { locator(s: string): Locator }).locator(selector), page),
   };
 }
 
