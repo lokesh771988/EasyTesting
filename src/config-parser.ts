@@ -7,7 +7,8 @@ import * as path from 'path';
 /**
  * Format (one step per line):
  *   # Test case name   - starts a new test case; all following steps belong to it until the next #
- *   headless=false   or   headed=true   - open browser in headed mode (visible window)
+ *   headless=false   or   headed=true   — visible browser window (headed mode)
+ *   headless=true    or   headed=false  — no window (headless). Common mistake: headed=false does NOT open a window; use headless=false or headed=true instead.
  *   goto:<url>                    - navigate to URL (optional, use at start)
  *   <label>:<locator>=value:<text> - type text into element (e.g. name:#user=value:john)
  *   click=<locator>               - click element (e.g. click=button[type="submit"])

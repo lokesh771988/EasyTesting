@@ -52,9 +52,21 @@ In `package.json` set:
 
 ## 3. Publish to npm
 
+**Main package** (from repo root):
+
 ```bash
 npm publish
 ```
+
+**Scaffold package** (required for `npm init cstesting@latest` — npm runs the `create-cstesting` package):
+
+```bash
+cd create-cstesting
+npm publish
+cd ..
+```
+
+Keep `create-cstesting` version in sync with `cstesting` (same version number in both `package.json` files).
 
 - First time: publishes the package to the public registry.
 - If you use a **scoped** name (e.g. `@myuser/cstesting`), publish with:
@@ -126,6 +138,6 @@ Then: `npm test`
 | 4. Version | `npm version patch` (or minor/major) |
 | 5. Build | `npm run build` |
 | 6. Dry run | `npm publish --dry-run` |
-| 7. Publish | `npm publish` (or `npm publish --access public` for scoped) |
+| 7. Publish | `npm publish` from root, then `cd create-cstesting && npm publish` |
 
-End users then run: **`npm install cstesting`** and **`npx cstesting`**.
+End users then run: **`npm init cstesting@latest`** or **`npm install cstesting`** and **`npx cstesting`**.

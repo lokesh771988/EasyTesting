@@ -11,7 +11,7 @@ import { writeReport } from './report';
 import { runConfigFile } from './config-runner';
 import type { RunResult } from './types';
 import { startRecording, stopRecording, exportRecorded } from './recorder';
-import { runSetup } from './setup';
+import { runInitProject } from './setup';
 import { normalizeTestTag } from './tags';
 
 const defaultPattern = '**/*.test.js';
@@ -208,7 +208,13 @@ function firstPatternArg(): string | undefined {
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   if (argv.includes('setup') || argv.includes('init')) {
-    await runSetup();
+    const yes = argv.includes('--yes') || argv.includes('-y');
+    try {
+      await runInitProject(yes ? { yes: true } : {});
+    } catch (err) {
+      console.error('Init failed:', err instanceof Error ? err.message : err);
+      process.exit(1);
+    }
     process.exit(0);
     return;
   }
@@ -296,7 +302,11 @@ async function main(): Promise<void> {
       if (b === 'edge' || b === 'opera' || b === 'firefox') browser = b;
       else if (b === 'chrome') browser = 'chrome';
     }
-    await runConfig(configPath, { headless: !headed, browser, pauseOnFailure });
+    await runConfig(configPath, {
+      ...(headed ? { headless: false } : {}),
+      browser,
+      pauseOnFailure,
+    });
     return;
   }
 
@@ -318,7 +328,11 @@ async function main(): Promise<void> {
           if (b === 'edge' || b === 'opera' || b === 'firefox') browser = b;
           else if (b === 'chrome') browser = 'chrome';
         }
-        await runConfig(arg, { headless: !headed, browser, pauseOnFailure });
+        await runConfig(arg, {
+          ...(headed ? { headless: false } : {}),
+          browser,
+          pauseOnFailure,
+        });
         return;
       }
     }

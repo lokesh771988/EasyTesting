@@ -1,0 +1,36 @@
+{
+  "name": "create-cstesting",
+  "version": "0.1.13",
+  "description": "Scaffold a CSTesting project (npm create cstesting@latest)",
+  "bin": {
+    "create-cstesting": "index.js"
+  },
+  "keywords": [
+    "cstesting",
+    "testing",
+    "e2e",
+    "scaffold",
+    "init"
+  ],
+  "author": "Gorantla Lokesh",
+  "license": "CS Technologies Telugu",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cstesttool/CSTesting-Nodejs",
+    "directory": "create-cstesting"
+  },
+  "bugs": {
+    "url": "https://github.com/cstesttool/CSTesting-Nodejs/issues"
+  },
+  "homepage": "https://github.com/cstesttool/CSTesting-Nodejs#readme",
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "dependencies": {
+    "cstesting": "^0.1.12"
+  }
+}

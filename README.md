@@ -4,11 +4,30 @@ A simple, extensible **Node.js testing framework**. Start with a test runner and
 
 ## For end users — install and run
 
+### New project (Playwright-style wizard)
+
+```bash
+mkdir my-tests && cd my-tests
+npm init -y
+npm init cstesting@latest
+```
+
+Same as `npm create cstesting@latest`. You will be prompted for:
+
+- **TypeScript or JavaScript** (default: TypeScript)
+- **Tests folder** (default: `tests`, or `e2e` if `tests` already exists)
+- **GitHub Actions workflow** for CI (default: yes)
+- **Verify Chrome** is installed (default: yes)
+
+Then run: **`npm test`**
+
+### Existing project
+
 ```bash
 # Install in your project
 npm install cstesting
 
-# Scaffold Page Object Model (pages/ + tests/ with sample code)
+# Interactive scaffold (same wizard as above)
 npx cstesting init
 # or
 npx cst init
@@ -101,7 +120,9 @@ Run tests from a **config file** without writing code. One function: pick file, 
 **Config format** (one step per line):
 
 - `# Test case name` — starts a **single test case**; all following steps belong to it until the next `#` (report shows one test per section)
-- `headless=false` or `headed=true` — open browser in **headed mode** (visible window; default is headless)
+- `headless=false` or `headed=true` — open browser in **headed mode** (visible window; default is headless when the file does not set either)
+- **CLI vs file:** Without `--headed`, the runner uses the **`.conf` file’s** `headless` / `headed` lines. Passing `--headed` forces a visible window even if the file says headless. (Earlier versions incorrectly forced headless whenever `--headed` was omitted.)
+- **`headed=false` does not show a window** — it means the same as `headless=true`. To see the browser, set **`headless=false`** or **`headed=true`**, or run `npx cstesting run file.conf --headed`.
 - `goto:<url>` — open URL
 - `<label>:<locator>=value:<text>` — type text into element (e.g. `username:#email=value:john`)
 - `click=<locator>` — click element (e.g. `click=button[type="submit"]`)

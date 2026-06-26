@@ -1,6 +1,6 @@
 {
   "name": "cstesting",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "A simple, extensible Node.js testing framework — start with a test runner and assertions, extend with browser automation later.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -10,7 +10,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "postinstall": "node dist/cli.js setup",
+    "postinstall": "node -e \"console.log('CSTesting installed. Run npm create cstesting@latest or npx cstesting init to scaffold tests.')\"",
     "test": "node dist/cli.js",
     "test:example": "node dist/cli.js example/",
     "example": "npm run build && npm run test:example",
@@ -42,6 +42,16 @@
     "README.md",
     "templates"
   ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./init": {
+      "types": "./dist/init-project.d.ts",
+      "default": "./dist/init-project.js"
+    }
+  },
   "dependencies": {
     "chrome-launcher": "^1.0.0",
     "chrome-remote-interface": "^0.33.2"
